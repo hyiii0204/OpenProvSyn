@@ -1,0 +1,15 @@
+networkx==2.6.3
+numpy==1.15.4
+scikit-learn==0.20.1
+scipy==1.1.0
+pyemd==0.5.1
+tqdm==4.28.1
+nltk==3.9.1
+dtaidistance
+torch==2.1.0
+torch-cluster==1.6.0
+torch-geometric==2.6.1
+torch-sparse==0.6.15
+gensim==4.3.3
+transformers==4.27.0
+
