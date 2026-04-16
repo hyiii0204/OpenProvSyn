@@ -14,7 +14,6 @@ pip install -r requirements.txt
 cd structure
 python main.py                 # Train the graph generation model
 python evaluate.py             # Generate graphs and compute MMD, Novelty, and Uniqueness
-python rule_postprocessing.py  # Rule-based post-processing
 ```
 
 ---
