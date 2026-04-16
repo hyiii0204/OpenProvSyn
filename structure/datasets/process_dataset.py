@@ -230,6 +230,109 @@ def produce_graphs_from_graphrnn_format(
     return count
 
 
+def bidirectional_subgraph_sampling(
+    G, seed_node, iterations, b_in, b_out,
+    min_num_nodes=None, max_num_nodes=None,
+    min_num_edges=None, max_num_edges=None
+):
+    """Bidirectional subgraph sampling.
+    Expands from seed_node by sampling both incoming and outgoing edges
+    iteratively, keeping the subgraph weakly connected and within size limits.
+    Works on directed graphs (DiGraph). Time filtering is omitted since the
+    input graph is already within the target time window."""
+
+    V_sub = {seed_node}
+    E_sub = set()
+    Frontier = {seed_node}
+
+    for _ in range(iterations):
+        # Collect candidate incoming / outgoing edges of Frontier not yet in E_sub
+        C_in = []
+        C_out = []
+
+        for node in Frontier:
+            for pred in G.predecessors(node):
+                edge = (pred, node)
+                if edge not in E_sub:
+                    C_in.append(edge)
+            for succ in G.successors(node):
+                edge = (node, succ)
+                if edge not in E_sub:
+                    C_out.append(edge)
+
+        if not C_in and not C_out:
+            break
+
+        # Uniform sample with budget
+        S_in = random.sample(C_in, b_in) if b_in < len(C_in) else C_in
+        S_out = random.sample(C_out, b_out) if b_out < len(C_out) else C_out
+
+        S = set(S_in) | set(S_out)
+
+        # Discover new nodes from sampled edges
+        new_nodes = set()
+        for u, v in S:
+            if u not in V_sub:
+                new_nodes.add(u)
+            if v not in V_sub:
+                new_nodes.add(v)
+
+        E_sub |= S
+        V_sub |= new_nodes
+
+        Frontier = new_nodes
+
+        if not Frontier:
+            break
+        if max_num_nodes and len(V_sub) >= max_num_nodes:
+            break
+        if max_num_edges and len(E_sub) >= max_num_edges:
+            break
+
+    # Build sub-DiGraph with labels
+    G_sampled = nx.DiGraph()
+    for node in V_sub:
+        G_sampled.add_node(node, label=G.nodes[node]['label'])
+    for u, v in E_sub:
+        G_sampled.add_edge(u, v, label=G.edges[u, v]['label'])
+
+    # Remove self-loops & relabel to consecutive integers
+    G_sampled.remove_edges_from(nx.selfloop_edges(G_sampled))
+    G_sampled = nx.convert_node_labels_to_integers(G_sampled)
+
+    # Post-checks: weakly connected & size constraints
+    if not nx.is_weakly_connected(G_sampled):
+        return None
+    if not check_graph_size(
+        G_sampled, min_num_nodes, max_num_nodes,
+        min_num_edges, max_num_edges
+    ):
+        return None
+
+    return G_sampled
+
+
+def sample_bidirectional_subgraphs(
+    idx, G, output_path, iterations, num_factor, b_in, b_out,
+    min_num_nodes=None, max_num_nodes=None,
+    min_num_edges=None, max_num_edges=None
+):
+    count = 0
+    deg = G.degree[idx]
+    for _ in range(num_factor * int(math.sqrt(deg))):
+        G_bi = bidirectional_subgraph_sampling(
+            G, idx, iterations=iterations, b_in=b_in, b_out=b_out,
+            min_num_nodes=min_num_nodes, max_num_nodes=max_num_nodes,
+            min_num_edges=min_num_edges, max_num_edges=max_num_edges)
+        if G_bi is None:
+            continue
+        with open(os.path.join(
+                output_path,
+                'graph{}-{}.dat'.format(idx, count)), 'wb') as f:
+            pickle.dump(G_bi, f)
+            count += 1
+
+
 def sample_subgraphs(
     idx, G, output_path, iterations, num_factor, min_num_nodes=None,
     max_num_nodes=None, min_num_edges=None, max_num_edges=None
@@ -318,43 +421,42 @@ def produce_random_walk_sampled_graphs(
     return count
 
 
-def produce_random_walk_sampled_graphs_prov(
-    input_path, dataset_name, output_path, iterations, num_factor,
-    num_graphs=None, min_num_nodes=None, max_num_nodes=None,
-    min_num_edges=None, max_num_edges=None
-):
-    print('Producing random_walk graphs - num_factor - {}'.format(num_factor))
-    
-    if dataset_name in ['nodlink', 'benign', 'trace', 'theia', 'cadets', 'theia_e5', 'optc_h501', 'clearscope_e5', 'optc_h201', 'theia_e3', 'cadets_e3']:
-        G =  nx.read_graphml(os.path.join(input_path, dataset_name + '.graphml'))
+def _load_provenance_graph(input_path, dataset_name):
+    """Load a provenance graph, keeping it as DiGraph to preserve direction."""
+    if dataset_name in ['nodlink', 'benign', 'trace', 'theia', 'cadets',
+                        'theia_e5', 'optc_h501', 'clearscope_e5',
+                        'optc_h201', 'theia_e3', 'cadets_e3']:
+        G = nx.read_graphml(os.path.join(input_path, dataset_name + '.graphml'))
     elif dataset_name in ['streamspot']:
         G = nx.node_link_graph(json.load(open('{}{}.json'.format(input_path, "1"))))
-        G = nx.to_undirected(G)
-        G = G.copy() 
-        for node, data in G.nodes(data=True):
-            if 'type' in data:
-                data['label'] = str(data.pop('type'))
-        for u, v, data in G.edges(data=True):
-            if 'type' in data:
-                data['label'] = str(data.pop('type'))
+    else:
+        raise ValueError('Unknown dataset: {}'.format(dataset_name))
+
+    # Ensure directed for bidirectional sampling (to_directed is a no-op if already DiGraph)
+    if not G.is_directed():
+        G = G.to_directed()
+
+    # Normalize attributes: 'type' → 'label' if 'label' is missing
+    for node, data in G.nodes(data=True):
+        if 'label' not in data and 'type' in data:
+            data['label'] = str(data.pop('type'))
+        elif 'label' not in data:
+            data['label'] = str(node)
+    for u, v, data in G.edges(data=True):
+        if 'label' not in data and 'type' in data:
+            data['label'] = str(data.pop('type'))
+        elif 'label' not in data:
+            data['label'] = 'DEFAULT_LABEL'
 
     G.remove_edges_from(nx.selfloop_edges(G))
     G = nx.convert_node_labels_to_integers(G)
+    return G
 
-    with Pool(processes=48) as pool:
-        for _ in tqdm(pool.imap_unordered(partial(
-                sample_subgraphs, G=G, output_path=output_path,
-                iterations=iterations, num_factor=num_factor,
-                min_num_nodes=min_num_nodes, max_num_nodes=max_num_nodes,
-                min_num_edges=min_num_edges, max_num_edges=max_num_edges),
-                list(range(G.number_of_nodes())))):
-            pass
 
-    filenames = []
-    for name in os.listdir(output_path):
-        if name.endswith('.dat'):
-            filenames.append(name)
-
+def _rename_sampled_files(output_path, num_graphs):
+    """Rename sampled graph files to sequential indices, trim excess."""
+    filenames = [name for name in os.listdir(output_path)
+                 if name.endswith('.dat')]
     random.shuffle(filenames)
 
     if not num_graphs:
@@ -372,6 +474,53 @@ def produce_random_walk_sampled_graphs_prov(
         os.remove(os.path.join(output_path, name))
 
     return count
+
+
+def produce_random_walk_sampled_graphs_prov(
+    input_path, dataset_name, output_path, iterations, num_factor,
+    num_graphs=None, min_num_nodes=None, max_num_nodes=None,
+    min_num_edges=None, max_num_edges=None
+):
+    print('Producing random_walk graphs - num_factor - {}'.format(num_factor))
+    G = _load_provenance_graph(input_path, dataset_name)
+    G_undirected = G.to_undirected()
+
+    with Pool(processes=48) as pool:
+        for _ in tqdm(pool.imap_unordered(partial(
+                sample_subgraphs, G=G_undirected, output_path=output_path,
+                iterations=iterations, num_factor=num_factor,
+                min_num_nodes=min_num_nodes, max_num_nodes=max_num_nodes,
+                min_num_edges=min_num_edges, max_num_edges=max_num_edges),
+                list(range(G.number_of_nodes())))):
+            pass
+
+    return _rename_sampled_files(output_path, num_graphs)
+
+
+def produce_bidirectional_sampled_graphs_prov(
+    input_path, dataset_name, output_path, iterations, num_factor,
+    b_in, b_out,
+    num_graphs=None, min_num_nodes=None, max_num_nodes=None,
+    min_num_edges=None, max_num_edges=None
+):
+    """Produce subgraphs via Time-Bounded Bidirectional Subgraph Sampling.
+    Since the input graph is already within the target time window,
+    we only do the bidirectional expansion (no temporal filtering)."""
+    print('Producing bidirectional sampled graphs - '
+          'num_factor={} b_in={} b_out={}'.format(num_factor, b_in, b_out))
+    G = _load_provenance_graph(input_path, dataset_name)
+
+    with Pool(processes=48) as pool:
+        for _ in tqdm(pool.imap_unordered(partial(
+                sample_bidirectional_subgraphs, G=G, output_path=output_path,
+                iterations=iterations, num_factor=num_factor,
+                b_in=b_in, b_out=b_out,
+                min_num_nodes=min_num_nodes, max_num_nodes=max_num_nodes,
+                min_num_edges=min_num_edges, max_num_edges=max_num_edges),
+                list(range(G.number_of_nodes())))):
+            pass
+
+    return _rename_sampled_files(output_path, num_graphs)
 
 # Routine to create datasets
 def create_graphs(args):
@@ -434,6 +583,8 @@ def create_graphs(args):
         base_path = os.path.join(args.dataset_path, args.graph_type + '/')
         random_walk_iterations = 150  # Controls size of graph
         num_factor = 5  # Controls size of dataset
+        b_in = getattr(args, 'b_in', 5)   # Budget for incoming edges
+        b_out = getattr(args, 'b_out', 5)  # Budget for outgoing edges
 
         min_num_nodes, max_num_nodes = None, None
         min_num_edges, max_num_edges = 20, None
@@ -477,10 +628,11 @@ def create_graphs(args):
         
         elif args.graph_type in ['streamspot', 'nodlink', 'benign', 'trace', 'theia', 'cadets', 'theia_e5', 'optc_h501', 'clearscope_e5', 'optc_h201', 'theia_e3', 'cadets_e3']:
             print(random_walk_iterations)
-            count = produce_random_walk_sampled_graphs_prov(
+            count = produce_bidirectional_sampled_graphs_prov(
                 base_path, args.graph_type, args.current_dataset_path,
                 num_graphs=args.num_graphs, iterations=random_walk_iterations,
-                num_factor=num_factor, min_num_nodes=min_num_nodes,
+                num_factor=num_factor, b_in=b_in, b_out=b_out,
+                min_num_nodes=min_num_nodes,
                 max_num_nodes=max_num_nodes, min_num_edges=min_num_edges,
                 max_num_edges=max_num_edges)
             

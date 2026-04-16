@@ -17,15 +17,22 @@ def mapping(path, dest):
     """
     :param path: path to folder which contains pickled networkx graphs
     :param dest: place where final dictionary pickle file is stored
-    :return: dictionary of 4 dictionary which contains forward 
-    and backwards mappings of vertices and labels, max_nodes and max_edges
+    :return: dictionary of mappings, max_nodes and max_edges etc.
     """
 
     node_forward, node_backward = {}, {}
     edge_forward, edge_backward = {}, {}
-    node_count, edge_count = 0, 0
+    direction_forward, direction_backward = {}, {}
+    node_count, edge_count, direction_count = 0, 0, 0
     max_nodes, max_edges, max_degree = 0, 0, 0
     min_nodes, min_edges = float('inf'), float('inf')
+
+    # Direction vocabulary: 0 (reverse) and 1 (forward)
+    direction_forward[0] = 0
+    direction_backward[0] = 0
+    direction_forward[1] = 1
+    direction_backward[1] = 1
+    direction_count = 2
 
     for filename in tqdm(os.listdir(path)):
         if filename.endswith(".dat"):
@@ -56,6 +63,8 @@ def mapping(path, dest):
         'node_backward': node_backward,
         'edge_forward': edge_forward,
         'edge_backward': edge_backward,
+        'direction_forward': direction_forward,
+        'direction_backward': direction_backward,
         'max_nodes': max_nodes,
         'min_nodes': min_nodes,
         'max_edges': max_edges,
@@ -147,15 +156,18 @@ def graphs_to_min_dfscodes(graphs_path, min_dfscodes_path, temp_path):
 def dfscode_to_tensor(dfscode, feature_map):
     max_nodes, max_edges = feature_map['max_nodes'], feature_map['max_edges']
     node_forward_dict, edge_forward_dict = feature_map['node_forward'], feature_map['edge_forward']
-    num_nodes_feat, num_edges_feat = len(
-        feature_map['node_forward']), len(feature_map['edge_forward'])
+    direction_forward_dict = feature_map['direction_forward']
+    num_nodes_feat = len(feature_map['node_forward'])
+    num_edges_feat = len(feature_map['edge_forward'])
+    num_direction_feat = len(direction_forward_dict)  # 2
 
-    # max_nodes, num_nodes_feat and num_edges_feat are end token labels
+    # max_nodes, num_nodes_feat, num_edges_feat, num_direction_feat are end token labels
     # So ignore tokens are one higher
     dfscode_tensors = {
         't1': (max_nodes + 1) * torch.ones(max_edges + 1, dtype=torch.long),
         't2': (max_nodes + 1) * torch.ones(max_edges + 1, dtype=torch.long),
         'v1': (num_nodes_feat + 1) * torch.ones(max_edges + 1, dtype=torch.long),
+        'de': (num_direction_feat + 1) * torch.ones(max_edges + 1, dtype=torch.long),
         'e': (num_edges_feat + 1) * torch.ones(max_edges + 1, dtype=torch.long),
         'v2': (num_nodes_feat + 1) * torch.ones(max_edges + 1, dtype=torch.long),
         'len': len(dfscode)
@@ -163,17 +175,13 @@ def dfscode_to_tensor(dfscode, feature_map):
 
     for i, code in enumerate(dfscode):
         try:
-            # dfscode_tensors['t1'][i] = int(code[0])
-            # dfscode_tensors['t2'][i] = int(code[1])
-            # dfscode_tensors['v1'][i] = int(node_forward_dict[int(code[2])])    
-            # dfscode_tensors['e'][i] = int(edge_forward_dict[code[3]])
-            # dfscode_tensors['v2'][i] = int(node_forward_dict[int(code[4])])
-
+            # 6-tuple: (t1, t2, v1, D_e, e, v2)
             dfscode_tensors['t1'][i] = int(code[0])
             dfscode_tensors['t2'][i] = int(code[1])
-            dfscode_tensors['v1'][i] = int(node_forward_dict[code[2]])    
-            dfscode_tensors['e'][i] = int(edge_forward_dict[code[3]])
-            dfscode_tensors['v2'][i] = int(node_forward_dict[code[4]])
+            dfscode_tensors['v1'][i] = int(node_forward_dict[code[2]])
+            dfscode_tensors['de'][i] = int(direction_forward_dict[int(code[3])])
+            dfscode_tensors['e'][i] = int(edge_forward_dict[code[4]])
+            dfscode_tensors['v2'][i] = int(node_forward_dict[code[5]])
         except KeyError:
             print(dfscode)
             print(node_forward_dict)
@@ -184,6 +192,7 @@ def dfscode_to_tensor(dfscode, feature_map):
         dfscode)] = max_nodes, max_nodes
     dfscode_tensors['v1'][len(dfscode)], dfscode_tensors['v2'][len(
         dfscode)] = num_nodes_feat, num_nodes_feat
+    dfscode_tensors['de'][len(dfscode)] = num_direction_feat
     dfscode_tensors['e'][len(dfscode)] = num_edges_feat
 
     return dfscode_tensors
@@ -266,6 +275,7 @@ def dfscodes_weights(dataset_path, graph_list, feature_map, device):
         't1_freq': torch.ones(feature_map['max_nodes'] + 1, device=device),
         't2_freq': torch.ones(feature_map['max_nodes'] + 1, device=device),
         'v1_freq': torch.ones(len(feature_map['node_forward']) + 1, device=device),
+        'de_freq': torch.ones(len(feature_map['direction_forward']) + 1, device=device),
         'e_freq': torch.ones(len(feature_map['edge_forward']) + 1, device=device),
         'v2_freq': torch.ones(len(feature_map['node_forward']) + 1, device=device)
     }
@@ -274,15 +284,18 @@ def dfscodes_weights(dataset_path, graph_list, feature_map, device):
         with open(dataset_path + 'graph' + str(idx) + '.dat', 'rb') as f:
             min_dfscode = pickle.load(f)
             for code in min_dfscode:
+                # 6-tuple: (t1, t2, v1, D_e, e, v2)
                 freq['t1_freq'][int(code[0])] += 1
                 freq['t2_freq'][int(code[1])] += 1
                 freq['v1_freq'][feature_map['node_forward'][code[2]]] += 1
-                freq['e_freq'][feature_map['edge_forward'][code[3]]] += 1
-                freq['v2_freq'][feature_map['node_forward'][code[4]]] += 1
+                freq['de_freq'][feature_map['direction_forward'][int(code[3])]] += 1
+                freq['e_freq'][feature_map['edge_forward'][code[4]]] += 1
+                freq['v2_freq'][feature_map['node_forward'][code[5]]] += 1
 
     freq['t1_freq'][-1] = len(graph_list)
     freq['t2_freq'][-1] = len(graph_list)
     freq['v1_freq'][-1] = len(graph_list)
+    freq['de_freq'][-1] = len(graph_list)
     freq['e_freq'][-1] = len(graph_list)
     freq['v2_freq'][-1] = len(graph_list)
 
@@ -292,6 +305,7 @@ def dfscodes_weights(dataset_path, graph_list, feature_map, device):
         't1_weight': torch.pow(torch.torch.max(freq['t1_freq']), 0.3) / torch.pow(freq['t1_freq'], 0.3),
         't2_weight': torch.pow(torch.max(freq['t2_freq']), 0.3) / torch.pow(freq['t2_freq'], 0.3),
         'v1_weight': torch.pow(torch.max(freq['v1_freq']), 0.3) / torch.pow(freq['v1_freq'], 0.3),
+        'de_weight': torch.pow(torch.max(freq['de_freq']), 0.3) / torch.pow(freq['de_freq'], 0.3),
         'e_weight': torch.pow(torch.max(freq['e_freq']), 0.3) / torch.pow(freq['e_freq'], 0.3),
         'v2_weight': torch.pow(torch.max(freq['v2_freq']), 0.3) / torch.pow(freq['v2_freq'], 0.3)
     }

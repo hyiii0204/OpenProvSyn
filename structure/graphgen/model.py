@@ -156,11 +156,12 @@ class RNN(nn.Module):
 
 def create_model(args, feature_map):
     max_nodes = feature_map['max_nodes']
-    len_node_vec, len_edge_vec = len(
-        feature_map['node_forward']) + 1, len(feature_map['edge_forward']) + 1
+    len_node_vec = len(feature_map['node_forward']) + 1
+    len_edge_vec = len(feature_map['edge_forward']) + 1
+    len_direction_vec = len(feature_map['direction_forward']) + 1  # 3 (0, 1, end_token)
 
     if args.note == 'DFScodeRNN':
-        feature_len = 2 * (max_nodes + 1) + 2 * len_node_vec + len_edge_vec
+        feature_len = 2 * (max_nodes + 1) + 2 * len_node_vec + len_direction_vec + len_edge_vec
     else:
         feature_len = 2 * (max_nodes + 1) + 2 * len_node_vec
 
@@ -200,6 +201,11 @@ def create_model(args, feature_map):
     }
 
     if args.note == 'DFScodeRNN':
+        output_direction = MLP_layer(
+            input_size=args.hidden_size_dfscode_rnn, embedding_size=args.embedding_size_direction_output,
+            output_size=len_direction_vec, dropout=args.dfscode_rnn_dropout).to(device=args.device)
+        model['output_direction'] = output_direction
+
         output_edge = MLP_layer(
             input_size=args.hidden_size_dfscode_rnn, embedding_size=args.embedding_size_edge_output,
             output_size=len_edge_vec, dropout=args.dfscode_rnn_dropout).to(device=args.device)

@@ -56,6 +56,7 @@ class Args:
         self.embedding_size_timestamp_output = 512
         self.embedding_size_vertex_output = 512  # the size for vertex output embedding
         self.embedding_size_edge_output = 512  # the size for edge output embedding
+        self.embedding_size_direction_output = 64  # the size for direction output embedding
         self.dfscode_rnn_dropout = 0.2  # Dropout layer in between RNN layers
         self.loss_type = 'BCE'
         self.weights = False

@@ -10,52 +10,62 @@ struct Edge {
     int src;
     int dest;
     string lbl;
-    Edge(int src, int dest, string lbl) {
+    int direction; // 1 = src→dest (forward in original digraph), 0 = dest→src
+    Edge(int src, int dest, string lbl, int direction) {
         this->src = src;
         this->dest = dest;
         this->lbl = lbl;
+        this->direction = direction;
     }
     Edge(int src, int dest) {
         this->src = src;
         this->dest = dest;
+        this->direction = 1;
     }
 };
 
 // represents a min DFS style representation of an edge i,e a
-// 5-tuple (i,j,labelA,EdgeLabel,labelB)
+// 6-tuple (i,j,labelA,Direction,EdgeLabel,labelB)
 struct DfsEdge {
     int vertex1;
     int vertex2;
     string label1;
+    int direction;   // 1 = original digraph direction agrees with DFS traversal (vertex1→vertex2)
+                     // 0 = original digraph direction is opposite (vertex2→vertex1)
     string edge_label;
     string label2;
 
-    DfsEdge(int vertex1, int vertex2, string label1, string edge_label,
-            string label2) {
+    DfsEdge(int vertex1, int vertex2, string label1, int direction,
+            string edge_label, string label2) {
         this->vertex1 = vertex1;
         this->vertex2 = vertex2;
         this->label1 = label1;
+        this->direction = direction;
         this->edge_label = edge_label;
         this->label2 = label2;
     }
-    void print()  // prints a DFS style edge of 5 tuple
+    void print()  // prints a DFS style edge of 6 tuple
     {
         cout << "<" << vertex1 << "," << vertex2 << "," << label1 << ","
-             << edge_label << "," << label2 << ">";
+             << direction << "," << edge_label << "," << label2 << ">";
     }
 
-    // Compare only edge and vertex labels
+    // Compare only edge and vertex labels (direction is NOT used for ordering)
     bool compare_labels_less(DfsEdge e) {
         if (this->label1 < e.label1) {
             return true;
         }
 
-        if (this->label1 == e.label1 && this->edge_label < e.edge_label) {
+        if (this->label1 == e.label1 && this->direction < e.direction) {
             return true;
         }
-            
+
+        if (this->label1 == e.label1 && this->direction == e.direction && this->edge_label < e.edge_label) {
+            return true;
+        }
+
         if (this->label1 == e.label1 &&
-            this->edge_label == e.edge_label && this->label2 < e.label2) {
+            this->direction == e.direction && this->edge_label == e.edge_label && this->label2 < e.label2) {
             return true;
         }
 
@@ -112,6 +122,8 @@ struct DfsEdge {
             return false;
         if (this->label1 != e.label1)
             return false;
+        if (this->direction != e.direction)
+            return false;
         if (this->edge_label != e.edge_label)
             return false;
         if (this->label2 != e.label2)
@@ -145,6 +157,8 @@ bool frontEdgeComparator(int i, int j) {
     Edge e2 = universal_edges[j];
     if (e1.lbl != e2.lbl)
         return (e1.lbl < e2.lbl);
+    if (e1.direction != e2.direction)
+        return (e1.direction < e2.direction);
     int v1 = (e1.src != universal_u) ? e1.src : e1.dest;
     int v2 = (e2.src != universal_u) ? e2.src : e2.dest;
     return (universal_labels[v1] < universal_labels[v2]);
@@ -209,6 +223,13 @@ struct Graph {
             min_vertex_code = vertex_code;
             min_code_set = true;
         }
+    }
+
+    // Given DFS current node u and edge index, compute D_e:
+    // D_e = 1 if original digraph edge direction agrees with DFS traversal (u → v)
+    // D_e = 0 if DFS traverses opposite to original direction (v → u)
+    int get_direction(int u, int edge_idx, int v) {
+        return (edges[edge_idx].src == u) ? 1 : 0;
     }
 
     // recurrsive function to explore dfs search from a given node u.
@@ -304,7 +325,7 @@ struct Graph {
             edge_vis[back[i]] = true;
             int v =
                 (edges[back[i]].src != u) ? edges[back[i]].src : edges[back[i]].dest;
-            DfsEdge e(dfs_number[u], dfs_number[v], labels[u], edges[back[i]].lbl,
+            DfsEdge e(dfs_number[u], dfs_number[v], labels[u], get_direction(u, back[i], v), edges[back[i]].lbl,
                       labels[v]);
             code.push_back(e);
             d--;
@@ -385,7 +406,7 @@ struct Graph {
                         if (!vertex_vis[v]) {
                             vertex_vis[v] = true;
                             dfs_number[v] = disc++;
-                            DfsEdge e(dfs_number[u], dfs_number[v], labels[u], edges[*it].lbl,
+                            DfsEdge e(dfs_number[u], dfs_number[v], labels[u], get_direction(u, *it, v), edges[*it].lbl,
                                       labels[v]);
                             code.push_back(e);
                             D_left--;
@@ -477,7 +498,7 @@ struct Graph {
                 if (!vertex_vis[v]) {
                     vertex_vis[v] = true;
                     dfs_number[v] = disc++;
-                    DfsEdge e(dfs_number[u], dfs_number[v], labels[u], edges[*it].lbl,
+                    DfsEdge e(dfs_number[u], dfs_number[v], labels[u], get_direction(u, *it, v), edges[*it].lbl,
                               labels[v]);
                     code.push_back(e);
                     d--;
@@ -501,7 +522,7 @@ struct Graph {
                     if (d == 0)
                         return 0;
                 } else {
-                    DfsEdge e(dfs_number[u], dfs_number[v], labels[u], edges[*it].lbl,
+                    DfsEdge e(dfs_number[u], dfs_number[v], labels[u], get_direction(u, *it, v), edges[*it].lbl,
                               labels[v]);
                     code.push_back(e);
                     vertex_code.push_back(make_pair(u, v));
@@ -612,7 +633,7 @@ struct Graph {
             edge_vis[back[i]] = true;
             int v =
                 (edges[back[i]].src != u) ? edges[back[i]].src : edges[back[i]].dest;
-            DfsEdge e(dfs_number[u], dfs_number[v], labels[u], edges[back[i]].lbl,
+            DfsEdge e(dfs_number[u], dfs_number[v], labels[u], get_direction(u, back[i], v), edges[back[i]].lbl,
                       labels[v]);
             code.push_back(e);
             d--;
@@ -658,7 +679,7 @@ struct Graph {
                 if (!vertex_vis[v]) {
                     vertex_vis[v] = true;
                     dfs_number[v] = disc++;
-                    DfsEdge e(dfs_number[u], dfs_number[v], labels[u], edges[*it].lbl,
+                    DfsEdge e(dfs_number[u], dfs_number[v], labels[u], get_direction(u, *it, v), edges[*it].lbl,
                               labels[v]);
                     code.push_back(e);
                     d--;
@@ -682,7 +703,7 @@ struct Graph {
                     if (d == 0)
                         return 0;
                 } else {
-                    DfsEdge e(dfs_number[u], dfs_number[v], labels[u], edges[*it].lbl,
+                    DfsEdge e(dfs_number[u], dfs_number[v], labels[u], get_direction(u, *it, v), edges[*it].lbl,
                               labels[v]);
                     code.push_back(e);
                     vertex_code.push_back(make_pair(u, v));
@@ -772,7 +793,8 @@ struct Graph {
         for (i = 0; i < min_code.size(); ++i)  // print min dfs code
         {
             ofile << " < " << min_code[i].vertex1 << " , " << min_code[i].vertex2
-                  << " , " << min_code[i].label1 << " , " << min_code[i].edge_label
+                  << " , " << min_code[i].label1 << " , " << min_code[i].direction
+                  << " , " << min_code[i].edge_label
                   << " , " << min_code[i].label2 << " > ";
             ofile << endl;
         }
@@ -799,10 +821,10 @@ int main(int argc, char *argv[]) {
 
     cin >> g.m;
     for (int i = 0; i < g.m; ++i) {
-        int src, dest;
+        int src, dest, dir;
         string lbl;
-        cin >> src >> dest >> lbl;
-        Edge e(src, dest, lbl);
+        cin >> src >> dest >> lbl >> dir;
+        Edge e(src, dest, lbl, dir);
         g.edges.push_back(e);
         g.adj_list[src].push_back(g.edges.size() - 1);
         g.adj_list[dest].push_back(g.edges.size() - 1);

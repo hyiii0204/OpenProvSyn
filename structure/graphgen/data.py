@@ -22,10 +22,12 @@ class Graph_DFS_code_from_file(Dataset):
         self.temp_path = args.current_temp_path
 
         self.max_edges = feature_map['max_edges']
-        max_nodes, len_node_vec, len_edge_vec = feature_map['max_nodes'], len(
-            feature_map['node_forward']) + 1, len(feature_map['edge_forward']) + 1
+        max_nodes = feature_map['max_nodes']
+        len_node_vec = len(feature_map['node_forward']) + 1
+        len_edge_vec = len(feature_map['edge_forward']) + 1
+        len_direction_vec = len(feature_map['direction_forward']) + 1
         self.feature_len = 2 * (max_nodes + 1) + 2 * \
-            len_node_vec + len_edge_vec
+            len_node_vec + len_direction_vec + len_edge_vec
 
     def __len__(self):
         return len(self.graph_list)
@@ -53,10 +55,12 @@ class Graph_DFS_code(Dataset):
         self.temp_path = args.current_temp_path
 
         self.max_edges = feature_map['max_edges']
-        max_nodes, len_node_vec, len_edge_vec = feature_map['max_nodes'], len(
-            feature_map['node_forward']) + 1, len(feature_map['edge_forward']) + 1
+        max_nodes = feature_map['max_nodes']
+        len_node_vec = len(feature_map['node_forward']) + 1
+        len_edge_vec = len(feature_map['edge_forward']) + 1
+        len_direction_vec = len(feature_map['direction_forward']) + 1
         self.feature_len = 2 * (max_nodes + 1) + 2 * \
-            len_node_vec + len_edge_vec
+            len_node_vec + len_direction_vec + len_edge_vec
 
     def __len__(self):
         return len(self.graph_list)
